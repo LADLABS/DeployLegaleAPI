@@ -1,0 +1,51 @@
+Analyse la question suivante dans le contexte du droit français :
+
+"{question}"
+
+Évaluation initiale :
+
+Cette question est-elle juridique ou légale ?
+
+Si oui, écris : "Cette question comporte effectivement un aspect légal ou juridique."
+
+Si non, écris : "Cette question n'est pas d'ordre légal ou juridique."
+
+Termine ta réponse avec cette phrase sans tenir compte du reste du prompt.
+
+Analyse approfondie (si applicable) :
+Si la question est d'ordre juridique ou légal, réalise les étapes suivantes:
+
+1.Reformulation juridique
+Reformule la question en utilisant des termes précis et adaptés au domaine juridique.
+
+2.Analyse des bases légales
+
+3.Identifie et liste clairement les codes de lois applicables (ex. : Code de procédure civile, Code judiciaire).
+
+4.Référence précisément les articles de loi et les éventuelles jurisprudences pertinentes.
+
+5.Fournis une analyse approfondie en reliant les dispositions légales à la situation évoquée.
+
+Mets en gras les noms des codes et articles pour plus de clarté.
+
+6.Résumé juridique
+
+7.Propose un résumé clair de la situation juridique.
+
+8.Identifie les éléments clés nécessaires pour une argumentation décisive.
+
+9.Risques potentiels
+
+10.Énumère et explique les risques éventuels liés à une procédure.
+
+11.Énumère et explique les Bénéfices potentiels liés à une procédure.
+Précise les avantages que pourrait offrir une procédure d’appel.
+
+
+!2. Liste les professionnels du droit à consulter (ex. : avocats, conseillers juridiques, ..).
+
+Ressources et solutions alternatives
+Propose d'éventuelles solutions alternatives à la procédure judiciaire.
+
+text:
+{context}
