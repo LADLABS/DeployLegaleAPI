@@ -1,6 +1,6 @@
 Analyse la question suivante dans le contexte du droit français :
 
-"{question}"
+"$question"
 
 Évaluation initiale :
 
@@ -48,4 +48,5 @@ Ressources et solutions alternatives
 Propose d'éventuelles solutions alternatives à la procédure judiciaire.
 
 text:
-{context}
+$context
+

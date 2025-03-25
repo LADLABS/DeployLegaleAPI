@@ -3,24 +3,73 @@ import logging
 import os
 import time
 from http import HTTPStatus
+from pathlib import Path
+from string import Template
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
-from ratelimit import RateLimitDecorator, sleep_and_retry, limits
+from ratelimit import sleep_and_retry, limits
 from supabase import Client, create_client
+
+# Load prompt template
+script_dir = Path(__file__).parent
+with open(script_dir / "prompt_template.pt", "r") as f:
+    PROMPT_TEMPLATE = Template(f.read())
 
 load_dotenv()
 
+# Create logs directory and files if they don't exist
+logs_dir = Path("logs")
+logs_dir.mkdir(parents=True, exist_ok=True)
+
+log_files = {
+    'error': logs_dir / 'error.log',
+    'access': logs_dir / 'access.log',
+    'info': logs_dir / 'info.log',
+    'debug': logs_dir / 'debug.log'
+}
+
+# Create log files if they don't exist
+for log_file in log_files.values():
+    log_file.touch(exist_ok=True)
+
 # Configure logging
+# Main logger for error and info
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("logs/error.log"),
     ],
 )
+
+# Error logger
+error_handler = logging.FileHandler(str(log_files['error']))
+error_handler.setLevel(logging.ERROR)
+error_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+logging.getLogger().addHandler(error_handler)
+
+# Info logger
+info_handler = logging.FileHandler(str(log_files['info']))
+info_handler.setLevel(logging.INFO)
+info_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+logging.getLogger().addHandler(info_handler)
+
+# Access logger for API requests
+access_logger = logging.getLogger('access')
+access_logger.setLevel(logging.INFO)
+access_handler = logging.FileHandler(str(log_files['access']))
+access_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+access_logger.addHandler(access_handler)
+
+# Debug logger
+debug_logger = logging.getLogger('debug')
+debug_logger.setLevel(logging.DEBUG)
+debug_handler = logging.FileHandler(str(log_files['debug']))
+debug_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s'))
+debug_logger.addHandler(debug_handler)
+
 logger = logging.getLogger(__name__)
 
 # Supabase setup
@@ -52,16 +101,6 @@ app = FastAPI()
 MAX_REQUESTS_PER_DAY = int(os.getenv("MAX_REQUESTS_PER_DAY", 1000))
 MAX_REQUESTS_PER_MINUTE = int(os.getenv("MAX_REQUESTS_PER_MINUTE", 100))
 
-daily_limit = RateLimitDecorator(limit=limits(calls=MAX_REQUESTS_PER_DAY, period=24 * 60 * 60), sleep_and_retry=True)
-minute_limit = RateLimitDecorator(limit=limits(calls=MAX_REQUESTS_PER_MINUTE, period=60), sleep_and_retry=True)
-
-@daily_limit
-@minute_limit
-@app.post("/legal")
-async def legal_endpoint(request: Request):
-    """
-    Endpoint to handle legal requests.
-    """
 
 async def check_user_key(api_key: str) -> bool:
     """
@@ -113,14 +152,19 @@ async def query_openai(prompt: str) -> str:
             raise HTTPException(status_code=500, detail=f"Error querying OpenAI: {e}")
 
 @app.post("/legal")
-@rate_limit
+@limits(calls=MAX_REQUESTS_PER_DAY, period=24 * 60 * 60)
+@limits(calls=MAX_REQUESTS_PER_MINUTE, period=60)
+@sleep_and_retry
 async def legal_endpoint(request: Request):
     """
     Endpoint to handle legal requests.
     """
     start_time = time.time()
+    client_host = request.client.host if request.client else "unknown"
+    access_logger.info(f"Request from {client_host} to /legal endpoint")
     try:
         data = await request.json()
+        debug_logger.debug(f"Request data: {data}")
         api_key = data.get("api_key")
         user_input = data.get("query")
 
@@ -132,14 +176,25 @@ async def legal_endpoint(request: Request):
         if not await check_user_key(api_key):
             raise HTTPException(status_code=403, detail="Invalid API key")
 
-        prompt = PROMPT_TEMPLATE.format(context="", question=user_input)
+        prompt = PROMPT_TEMPLATE.substitute(context="", question=user_input)
+        debug_logger.debug(f"Generated prompt: {prompt}")
         response_text = await query_openai(prompt)
-        logger.info(f"Legal request processed successfully in {time.time() - start_time:.2f} seconds")
+        debug_logger.debug(f"OpenAI response: {response_text}")
+        
+        processing_time = time.time() - start_time
+        logger.info(f"Legal request processed successfully in {processing_time:.2f} seconds")
+        access_logger.info(f"Request completed in {processing_time:.2f}s with status 200")
         return {"response": response_text}
 
     except HTTPException as e:
-        logger.error(f"HTTP Exception: {e}")
+        error_msg = f"HTTP Exception: {e}"
+        logger.error(error_msg)
+        access_logger.info(f"Request failed with status {e.status_code}")
+        debug_logger.error(f"HTTP Exception details: {e.detail}")
         raise e
     except Exception as e:
-        logger.error(f"Exception: {e}")
+        error_msg = f"Exception: {e}"
+        logger.error(error_msg)
+        access_logger.info("Request failed with status 500")
+        debug_logger.error(f"Unexpected error details: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
