@@ -8,7 +8,7 @@ This project is a Python API designed to integrate with Supabase for user manage
 -   **Concurrent Processing**: Asynchronous handling of requests for optimal performance.
 -   **HTTP/2 Support**: Efficient request handling using FastAPI.
 -   **Throttling**: Rate limiting to prevent abuse.
--   **OpenAPI Integration**: Dynamic query construction based on user input and templates.
+-   **AI Model Integration**: Uses the `openai` library to interact with a configurable generative AI endpoint (e.g., Google Gemini via its OpenAI-compatible endpoint). Dynamic query construction based on user input and templates.
 -   **Logging**: User request logging and error logging.
 
 ## Setup
@@ -34,11 +34,16 @@ source myenv/bin/activate
     ```
 4. Create a `.env` file in the `LegalAPIg` directory with the following content:
     ```
+    # Supabase Credentials
     SUPABASE_URL="your_supabase_url"
     SUPABASE_KEY="your_supabase_key"
-    OPENAI_API_KEY="your_openai_api_key"
+
+    # AI Model Configuration (using OpenAI library)
+    OPENAI_API_KEY="your_api_key_for_the_endpoint" # API key for the target endpoint
+    GEMINI_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/" # Base URL of the OpenAI-compatible endpoint (defaults to Google Gemini)
+    GEMINI_MODEL="gemini-2.0-flash" # Model name to use at the endpoint (defaults to gemini-2.0-flash)
     ```
-    Replace the placeholder values with your actual Supabase and OpenAI API keys.
+    Replace the placeholder values with your actual Supabase credentials and the appropriate API key, base URL, and model name for your target AI endpoint.
 
 ## Usage
 
@@ -81,9 +86,9 @@ This project is configured for deployment on Vercel. To deploy:
 
 ## Project Structure
 
--   `api/`: Contains the main API code (`main.py`).
--   `logs/`: Directory for storing error logs.
--   `.env`: Environment variables for Supabase and OpenAI API keys.
+-   `api/`: Contains the main API code (`main.py`) and the prompt template (`prompt_template.pt`).
+-   `logs/`: Directory for storing log files (created automatically).
+-   `.env`: Environment variables for Supabase credentials and AI model configuration.
 -   `requirements.txt`: Python dependencies.
--   `readme.md`: Project documentation.
+-   `readme.md`: Project documentation (this file).
 -   `vercel.json`: Vercel deployment configuration.

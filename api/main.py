@@ -15,6 +15,7 @@ from ratelimit import sleep_and_retry, limits
 from supabase import Client, create_client, AsyncClient, create_async_client
 from supabase.lib.client_options import ClientOptions
 from gotrue.errors import AuthApiError # Corrected import based on search
+from openai import AsyncOpenAI, OpenAIError # Add OpenAI import
 
 # Load prompt template
 script_dir = Path(__file__).parent
@@ -81,22 +82,22 @@ supabase_url: str = os.getenv("SUPABASE_URL")
 supabase_key: str = os.getenv("SUPABASE_KEY")
 # supabase: AsyncClient = create_async_client(supabase_url, supabase_key) # Moved to lifespan
 
-# OpenAI setup
-openai_api_key: str = os.getenv("OPENAI_API_KEY")
-openai_api_url: str = os.getenv("OPENAI_API_URL")
-openai_model: str = os.getenv("OPENAI_MODEL")
+# OpenAI Client Setup (using OpenAI library)
+openai_api_key: str = os.getenv("OPENAI_API_KEY") # Use OPENAI_API_KEY
+gemini_base_url: str = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/") # Keep base URL for Gemini endpoint
+gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash") # Keep model for Gemini endpoint
 
-if not openai_api_key:
-    logger.error("OPENAI_API_KEY is not set")
-    raise EnvironmentError("OPENAI_API_KEY is not set")
+if not openai_api_key: # Check openai_api_key
+    logger.error("OPENAI_API_KEY environment variable is not set") # Update error message
+    raise EnvironmentError("OPENAI_API_KEY is not set") # Update exception message
 
-if not openai_api_url:
-    logger.error("OPENAI_API_URL is not set")
-    raise EnvironmentError("OPENAI_API_URL is not set")
+if not gemini_base_url:
+    logger.error("GEMINI_BASE_URL environment variable is not set")
+    raise EnvironmentError("GEMINI_BASE_URL is not set")
 
-if not openai_model:
-    logger.error("OPENAI_MODEL is not set")
-    raise EnvironmentError("OPENAI_MODEL is not set")
+if not gemini_model:
+    logger.error("GEMINI_MODEL environment variable is not set")
+    raise EnvironmentError("GEMINI_MODEL is not set")
 
 # Lifespan context manager for startup/shutdown events
 @contextlib.asynccontextmanager
@@ -134,7 +135,16 @@ async def lifespan(app: FastAPI):
         app.state.supabase = supabase_client
         logger.info(f"Supabase client initialized successfully. Type: {type(supabase_client)}")
         logger.debug(f"Client methods: {[m for m in dir(supabase_client) if not m.startswith('_')]}")
-            
+
+        # Initialize OpenAI client (for Gemini)
+        logger.info(f"Initializing OpenAI client for Gemini with base URL: {gemini_base_url}")
+        openai_client = AsyncOpenAI(
+            api_key=openai_api_key, # Use openai_api_key variable
+            base_url=gemini_base_url
+        )
+        app.state.openai = openai_client
+        logger.info("OpenAI client for Gemini initialized successfully.")
+
         yield
     except Exception as e:
         logger.error(f"Failed to initialize Supabase client: {e}")
@@ -150,6 +160,17 @@ async def lifespan(app: FastAPI):
                     logger.warning("Supabase client missing aclose method")
             except Exception as e:
                 logger.error(f"Error closing Supabase client: {e}")
+
+        # Explicit cleanup of OpenAI client (if needed)
+        if hasattr(app.state, 'openai') and app.state.openai is not None:
+            try:
+                # The openai library >= 1.0 manages connections automatically via httpx.
+                # Explicit close is generally not needed unless specific resource cleanup is required.
+                # await app.state.openai.close() # Uncomment if explicit close becomes necessary
+                logger.info("OpenAI client cleanup check complete.")
+            except Exception as e:
+                logger.error(f"Error during OpenAI client cleanup: {e}")
+
         logger.info("Lifespan cleanup finished")
 
 # FastAPI setup
@@ -307,41 +328,62 @@ async def check_user_key(request: Request, username: str, password: str, api_key
         # Generic error for unexpected issues
         raise HTTPException(status_code=500, detail="Internal server error during authentication/authorization")
 
-async def query_openai(prompt: str) -> str:
+async def query_openai(request: Request, prompt: str) -> str:
     """
-    Queries the OpenAI API with the given prompt.
+    Queries the configured Generative AI model (via OpenAI client library) with the given prompt.
+    Accesses the client via request.app.state.openai.
     """
-    headers = {
-        "Authorization": f"Bearer {openai_api_key}",
-        "Content-Type": "application/json",
-    }
-    data = {
-        "model": openai_model,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                openai_api_url, headers=headers, json=data
-            )
-            response.raise_for_status()
-            response_text = response.json()["choices"][0]["message"]["content"]
-            return response_text
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error querying OpenAI: {e}")
-            if e.response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
-                retry_after = int(e.response.headers.get("Retry-After", 60))
-                logger.warning(f"Rate limited by OpenAI. Retrying after {retry_after} seconds.")
-                await asyncio.sleep(retry_after)
-                return await query_openai(prompt)  # Retry the request
-            else:
-                raise HTTPException(
-                    status_code=e.response.status_code,
-                    detail=f"Error querying OpenAI: {e}",
-                )
-        except Exception as e:
-            logger.error(f"Error querying OpenAI: {e}")
-            raise HTTPException(status_code=500, detail=f"Error querying OpenAI: {e}")
+    client: AsyncOpenAI = request.app.state.openai
+    if not client:
+        logger.error("OpenAI client not found in application state.")
+        raise HTTPException(status_code=500, detail="AI service not initialized")
+
+    try:
+        logger.debug(f"Sending prompt to model {gemini_model}: {prompt[:100]}...")
+        response = await client.chat.completions.create(
+            model=gemini_model,
+            messages=[
+                {"role": "system", "content": "You are a helpful legal assistant."}, # Added system prompt
+                {"role": "user", "content": prompt}
+            ],
+            n=1 # As per user example
+        )
+        response_text = response.choices[0].message.content
+        if not response_text:
+            logger.warning("Received empty response from AI model.")
+            # Decide how to handle empty response, maybe raise error or return default
+            raise HTTPException(status_code=500, detail="AI model returned an empty response.")
+        logger.debug(f"Received response: {response_text[:100]}...")
+        return response_text
+
+    except OpenAIError as e: # Catch specific OpenAI errors
+        logger.error(f"OpenAI API error: {e} (Type: {type(e).__name__})")
+        status_code = 500 # Default internal server error
+        detail = f"Error querying AI model: {e}"
+
+        # Check for specific error types if needed (e.g., RateLimitError)
+        if isinstance(e, openai.RateLimitError):
+            status_code = HTTPStatus.TOO_MANY_REQUESTS
+            detail = "AI model rate limit exceeded. Please try again later."
+            # Note: Automatic retry logic removed for simplicity, can be added back if needed
+            # retry_after = e.response.headers.get("Retry-After") # Check how openai lib exposes this
+            # logger.warning(f"Rate limited by AI model. Retry after: {retry_after}")
+            # await asyncio.sleep(int(retry_after) if retry_after else 60)
+            # return await query_openai(request, prompt) # Recursive retry
+        elif isinstance(e, openai.APIConnectionError):
+            status_code = HTTPStatus.SERVICE_UNAVAILABLE
+            detail = "Could not connect to the AI model service."
+        elif isinstance(e, openai.AuthenticationError):
+            status_code = HTTPStatus.UNAUTHORIZED
+            detail = "AI service authentication failed. Check API key."
+        # Add more specific error handling as needed
+
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    except Exception as e:
+        # Catch any other unexpected errors
+        logger.error(f"Unexpected error querying AI model: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Unexpected internal server error: {e}")
 
 @app.post("/legal")
 # @limits(calls=MAX_REQUESTS_PER_DAY, period=24 * 60 * 60)
@@ -378,8 +420,9 @@ async def legal_endpoint(request: Request):
 
         prompt = PROMPT_TEMPLATE.substitute(context="", question=user_input)
         debug_logger.debug(f"Generated prompt: {prompt}")
-        response_text = await query_openai(prompt)
-        debug_logger.debug(f"OpenAI response: {response_text}")
+        # Pass request object to query_openai
+        response_text = await query_openai(request, prompt)
+        debug_logger.debug(f"AI response: {response_text}") # Update log message variable name
         
         processing_time = time.time() - start_time
         logger.info(f"Legal request processed successfully in {processing_time:.2f} seconds")
