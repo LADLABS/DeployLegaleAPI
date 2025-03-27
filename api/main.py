@@ -17,6 +17,7 @@ from supabase.lib.client_options import ClientOptions
 from gotrue.errors import AuthApiError # Corrected import based on search
 from openai import AsyncOpenAI, OpenAIError # Add OpenAI import
 
+from fastapi import BackgroundTasks # Import BackgroundTasks
 # Load prompt template
 script_dir = Path(__file__).parent
 with open(script_dir / "prompt_template.pt", "r") as f:
@@ -181,7 +182,7 @@ MAX_REQUESTS_PER_DAY = int(os.getenv("MAX_REQUESTS_PER_DAY", 1000))
 MAX_REQUESTS_PER_MINUTE = int(os.getenv("MAX_REQUESTS_PER_MINUTE", 100))
 
 
-async def check_user_key(request: Request, username: str, password: str, api_key: str) -> bool:
+async def check_user_key(request: Request, username: str, password: str, api_key: str) -> str:
     """
     Authenticates the user with username/password, then checks if the provided
     API key is valid for that user and if they have sufficient credits.
@@ -308,7 +309,7 @@ async def check_user_key(request: Request, username: str, password: str, api_key
             # Check credits
             if user_profile.get("credits", 0) > 0:
                 logger.info(f"API key {api_key} validated for user {username}. Credits: {user_profile['credits']}")
-                return True # Key valid and credits available
+                return user.id # Return user_id on success
             else:
                 logger.warning(f"User {username} (ID: {user.id}) has insufficient credits ({user_profile.get('credits', 0)}).")
                 raise HTTPException(status_code=403, detail="Insufficient credits")
@@ -385,11 +386,59 @@ async def query_openai(request: Request, prompt: str) -> str:
         logger.error(f"Unexpected error querying AI model: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Unexpected internal server error: {e}")
 
+async def consume_credit(request: Request, user_id: str):
+    """
+    Decrements the credit count for the given user_id by 1.
+    Uses Supabase RPC for atomic operation to avoid race conditions.
+    """
+    supabase_client: AsyncClient = request.app.state.supabase
+    if not supabase_client:
+        logger.error(f"[consume_credit] Supabase client not found for user_id: {user_id}")
+        return
+
+    try:
+        # First verify the user exists and has credits
+        profile_res = await supabase_client.from_("profiles") \
+            .select("credits") \
+            .eq("user_id", user_id) \
+            .single() \
+            .execute()
+
+        if not profile_res.data:
+            logger.error(f"[consume_credit] No profile found for user_id: {user_id}")
+            return
+
+        current_credits = profile_res.data.get("credits", 0)
+        if current_credits <= 0:
+            logger.warning(f"[consume_credit] User {user_id} has no credits ({current_credits})")
+            return
+
+        # Use RPC for atomic decrement
+        rpc_response = await supabase_client.rpc(
+            "decrement_credits",
+            {"user_uuid": user_id}
+        ).execute()
+
+        # If the RPC call executes without raising an exception,
+        # and the function returns void, we assume success (HTTP 204).
+        logger.info(f"[consume_credit] Successfully executed decrement RPC for user_id: {user_id}")
+
+    except Exception as e:
+        # Log any exception during the RPC call or the preceding checks
+        logger.error(f"[consume_credit] Error during credit consumption for user_id {user_id}: {e}", exc_info=True)
+
+    except Exception as e:
+        logger.error(f"[consume_credit] Error decrementing credits for user_id {user_id}: {e}", exc_info=True)
+
+
+    except Exception as e:
+        logger.error(f"[consume_credit] Error decrementing credits for user_id {user_id}: {e}", exc_info=True)
+
 @app.post("/legal")
 # @limits(calls=MAX_REQUESTS_PER_DAY, period=24 * 60 * 60)
 # @limits(calls=MAX_REQUESTS_PER_MINUTE, period=60)
 # @sleep_and_retry
-async def legal_endpoint(request: Request):
+async def legal_endpoint(request: Request, background_tasks: BackgroundTasks):
     """
     Endpoint to handle legal requests.
     """
@@ -410,12 +459,8 @@ async def legal_endpoint(request: Request):
             )
 
         # Pass username and password along with api_key
-        if not await check_user_key(request, username, password, api_key):
-            # Error handling (invalid credentials or key/credits) will be done within check_user_key
-            # Re-raising here might be redundant if check_user_key raises appropriate HTTPExceptions
-            # For now, let's assume check_user_key handles raising errors.
-            # If check_user_key returns False without raising, we raise a generic 403.
-             raise HTTPException(status_code=403, detail="Authentication or authorization failed")
+        # check_user_key now returns user_id on success or raises HTTPException on failure
+        user_id = await check_user_key(request, username, password, api_key)
 
 
         prompt = PROMPT_TEMPLATE.substitute(context="", question=user_input)
@@ -423,6 +468,9 @@ async def legal_endpoint(request: Request):
         # Pass request object to query_openai
         response_text = await query_openai(request, prompt)
         debug_logger.debug(f"AI response: {response_text}") # Update log message variable name
+
+        # Add credit consumption to background tasks
+        background_tasks.add_task(consume_credit, request, user_id)
         
         processing_time = time.time() - start_time
         logger.info(f"Legal request processed successfully in {processing_time:.2f} seconds")

@@ -92,3 +92,33 @@ This project is configured for deployment on Vercel. To deploy:
 -   `requirements.txt`: Python dependencies.
 -   `readme.md`: Project documentation (this file).
 -   `vercel.json`: Vercel deployment configuration.
+
+
+---Supabase Decrement
+
+--Decrement Credit function
+create or replace function decrement_credits(user_uuid uuid) 
+returns void as $$
+  update profiles 
+  set credits = credits - 1 
+  where user_id = user_uuid and credits > 0;
+$$ language sql;
+
+
+-------------------
+
+Okay, Row Level Security (RLS) is a very common reason for this behavior. The SQL function might be correct, but the security policies prevent the API (running as a specific role, often authenticated) from actually performing the UPDATE operation defined within that function.
+
+Please go to your Supabase Dashboard:
+
+Navigate to Authentication -> Policies.
+Find the profiles table in the list.
+Look for policies related to the UPDATE operation.
+You need an UPDATE policy that allows the role your API uses to modify the credits field for the relevant user. A common policy allows users to update their own profile. It might look something like this:
+
+Policy Name: Allow authenticated users to update their own profile (or similar)
+Target Roles: authenticated (or the specific role your API key corresponds to)
+Operation: UPDATE
+USING expression: (auth.uid() = user_id)
+WITH CHECK expression: (auth.uid() = user_id)
+
