@@ -21,6 +21,13 @@ This project is a Python API designed to integrate with Supabase for user manage
     ```bash
     cd LegalAPIg
     ```
+Create virtual env
+  
+   python3 -m venv myenv
+
+source myenv/bin/activate
+
+
 3. Install dependencies:
     ```bash
     pip install -r requirements.txt
@@ -50,12 +57,14 @@ This will start the API server on `http://127.0.0.1:8000`.
 curl -X POST http://127.0.0.1:8000/legal \
      -H "Content-Type: application/json" \
      -d '{
-       "api_key": "YOUR_API_KEY",
-       "query": "What are the legal implications of..."
+       "username": "ladorure@outlook.com    ",
+       "password": "Qwerty11",
+       "api_key": "872fe3e3-3e92-45dc-9588-8b87e231b344",
+       "query": "Comment contester une amende pour stationnement?"
      }'
 ```
 
-Replace `YOUR_API_KEY` with your actual API key and `"What are the legal implications of..."` with your legal query.
+Replace `your_email@example.com`, `your_password`, `your_api_key` with your actual credentials and API key, and update the query as needed.
 
 ## Deployment
 
