@@ -25,8 +25,24 @@ with open(script_dir / "prompt_template.pt", "r") as f:
 
 load_dotenv()
 
-# Create logs directory and files if they don't exist
-logs_dir = Path("logs")
+# Helper function to get boolean value from environment variable
+def get_bool_env(var_name, default=True):
+    value = os.getenv(var_name, str(default))
+    # Check against various truthy string values
+    return value.lower() in ('true', '1', 't', 'y', 'yes')
+
+# Load environment variables (already loaded earlier, but ensure it's done before use)
+# load_dotenv() # This is typically done once at the start
+
+# Get logging enable flags from environment variables
+log_info_enabled = get_bool_env("LOG_INFO_ENABLED", True)
+log_debug_enabled = get_bool_env("LOG_DEBUG_ENABLED", True)
+log_warning_enabled = get_bool_env("LOG_WARNING_ENABLED", True) # Read for potential future use
+log_error_enabled = get_bool_env("LOG_ERROR_ENABLED", True)
+
+# Create logs directory relative to this script file
+script_dir = Path(__file__).parent # Ensure logs are relative to main.py
+logs_dir = script_dir / "logs"
 logs_dir.mkdir(parents=True, exist_ok=True)
 
 log_files = {
@@ -41,40 +57,68 @@ for log_file in log_files.values():
     log_file.touch(exist_ok=True)
 
 # Configure logging
-# Main logger for error and info
+# Basic config - set level low to allow handlers to filter
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG, # Set to lowest level, handlers will filter
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.StreamHandler(),
+        logging.StreamHandler(), # Keep console output
     ],
+    # Force=True might be needed if basicConfig was called elsewhere implicitly
+    # force=True
 )
 
+# Get root logger to add handlers conditionally
+root_logger = logging.getLogger()
+
+# Use logging.info for setup messages AFTER basicConfig is set
+logging.info("--- Logging Configuration Start ---")
+
 # Error logger
-error_handler = logging.FileHandler(str(log_files['error']))
-error_handler.setLevel(logging.ERROR)
-error_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-logging.getLogger().addHandler(error_handler)
+if log_error_enabled:
+    error_handler = logging.FileHandler(str(log_files['error']))
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    root_logger.addHandler(error_handler)
+    logging.info("Error logging to file enabled.")
+else:
+    logging.info("Error logging to file disabled.")
 
-# Info logger
-info_handler = logging.FileHandler(str(log_files['info']))
-info_handler.setLevel(logging.INFO)
-info_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-logging.getLogger().addHandler(info_handler)
+# Info logger (also handles WARNING if enabled)
+if log_info_enabled:
+    info_handler = logging.FileHandler(str(log_files['info']))
+    # This handler will capture INFO, WARNING by default if level is INFO
+    info_handler.setLevel(logging.INFO)
+    info_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    root_logger.addHandler(info_handler)
+    logging.info("Info/Warning logging to file enabled.")
+else:
+    logging.info("Info/Warning logging to file disabled.")
 
-# Access logger for API requests
+# Access logger for API requests (remains unconditional)
 access_logger = logging.getLogger('access')
 access_logger.setLevel(logging.INFO)
 access_handler = logging.FileHandler(str(log_files['access']))
 access_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
 access_logger.addHandler(access_handler)
+access_logger.propagate = False # Prevent access logs going to root handlers
+logging.info("Access logging to file enabled.")
 
-# Debug logger
+# Debug logger (separate logger)
 debug_logger = logging.getLogger('debug')
-debug_logger.setLevel(logging.DEBUG)
-debug_handler = logging.FileHandler(str(log_files['debug']))
-debug_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s'))
-debug_logger.addHandler(debug_handler)
+if log_debug_enabled:
+    debug_logger.setLevel(logging.DEBUG) # Set level on the specific logger
+    debug_handler = logging.FileHandler(str(log_files['debug']))
+    debug_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s'))
+    debug_logger.addHandler(debug_handler)
+    debug_logger.propagate = False # Prevent debug logs going to root handlers
+    logging.info("Debug logging to file enabled.")
+else:
+    debug_logger.setLevel(logging.CRITICAL + 1) # Effectively disable the logger
+    # Remove handlers if they exist from previous runs? Might be overkill.
+    logging.info("Debug logging to file disabled.")
+
+logging.info("--- Logging Configuration End ---")
 
 logger = logging.getLogger(__name__)
 
