@@ -8,9 +8,7 @@ Cette question est-elle juridique ou légale ?
 
 Si oui, écris : "Cette question comporte effectivement un aspect légal ou juridique."
 
-Si non, écris : "Cette question n'est pas d'ordre légal ou juridique."
-
-Termine ta réponse avec cette phrase sans tenir compte du reste du prompt.
+Si non, écris : "Cette question n'est pas d'ordre légal ou juridique." et termine ta réponse.
 
 Analyse approfondie (si applicable) :
 Si la question est d'ordre juridique ou légal, réalise les étapes suivantes:
@@ -20,7 +18,7 @@ Reformule la question en utilisant des termes précis et adaptés au domaine jur
 
 2.Analyse des bases légales
 
-3.Identifie et liste clairement les codes de lois applicables (ex. : Code de procédure civile, Code judiciaire).
+3.Identifie et liste clairement les codes de lois et décret applicables (ex. : Code de procédure civile, Code judiciaire).
 
 4.Référence précisément les articles de loi et les éventuelles jurisprudences pertinentes.
 
