@@ -62,14 +62,13 @@ This will start the API server on `http://127.0.0.1:8000`.
 curl -X POST http://127.0.0.1:8000/legal \
      -H "Content-Type: application/json" \
      -d '{
-       "username": "ladorure@outlook.com    ",
-       "password": "Qwerty11",
+       "user_id": "564bac7a-60f9-4056-99c7-428ff45d8887",
        "api_key": "872fe3e3-3e92-45dc-9588-8b87e231b344",
        "query": "Comment contester une amende pour stationnement?"
      }'
 ```
 
-Replace `your_email@example.com`, `your_password`, `your_api_key` with your actual credentials and API key, and update the query as needed.
+Replace `user_id` with your actual user ID and `api_key` with your API key, and update the query as needed.
 
 ## Deployment
 
