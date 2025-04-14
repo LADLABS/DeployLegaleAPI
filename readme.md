@@ -59,7 +59,7 @@ This will start the API server on `http://127.0.0.1:8000`.
 ## Example Request
 
 ```bash
-curl -X POST http://127.0.0.1:8000/legal \
+curl -X POST https://questionlegale.vercel.app \
      -H "Content-Type: application/json" \
      -d '{
        "user_id": "564bac7a-60f9-4056-99c7-428ff45d8887",
