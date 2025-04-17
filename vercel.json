@@ -15,5 +15,15 @@
              "src": "/(.*)",
              "dest": "/api/main.py"
         }
-    ]
+    ],
+    "env": {
+        "SUPABASE_URL": "@supabase_url",
+        "SUPABASE_KEY": "@supabase_key",
+        "OPENAI_API_KEY": "@openai_api_key",
+        "GEMINI_BASE_URL": "@gemini_base_url",
+        "GEMINI_MODEL": "@gemini_model",
+        "MAX_REQUESTS_PER_DAY": "1500",
+        "MAX_REQUESTS_PER_MINUTE": "15",
+        "LOG_LEVEL": "INFO"
+    }
 }

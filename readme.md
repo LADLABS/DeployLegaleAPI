@@ -68,7 +68,7 @@ This endpoint processes legal queries using the configured AI model.
 
 ```bash
 # For deployed version
-curl -X POST https://questionlegale.vercel.app/legal \
+curl -X POST https://qlegal2.vercel.app/legal \
      -H "Content-Type: application/json" \
      -d '{
        "user_id": "564bac7a-60f9-4056-99c7-428ff45d8887",
