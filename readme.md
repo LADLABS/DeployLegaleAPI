@@ -17,22 +17,24 @@ This project is a Python API designed to integrate with Supabase for user manage
     ```bash
     git clone <repository_url>
     ```
+
 2. Navigate to the project directory:
     ```bash
     cd LegalAPIg
     ```
-Create virtual env
-  
-   python3 -m venv myenv
 
-source myenv/bin/activate
+3. Create virtual env:
+    ```bash
+    python3 -m venv myenv
+    source myenv/bin/activate
+    ```
 
-
-3. Install dependencies:
+4. Install dependencies:
     ```bash
     pip install -r requirements.txt
     ```
-4. Create a `.env` file in the `LegalAPIg` directory with the following content:
+
+5. Create a `.env` file in the `LegalAPIg` directory with the following content:
     ```
     # Supabase Credentials
     SUPABASE_URL="your_supabase_url"
@@ -56,10 +58,26 @@ uvicorn main:app --reload
 
 This will start the API server on `http://127.0.0.1:8000`.
 
-## Example Request
+## API Endpoints
+
+### `/legal` Endpoint
+
+This endpoint processes legal queries using the configured AI model.
+
+**Request:**
 
 ```bash
-curl -X POST https://questionlegale.vercel.app \
+# For deployed version
+curl -X POST https://questionlegale.vercel.app/legal \
+     -H "Content-Type: application/json" \
+     -d '{
+       "user_id": "564bac7a-60f9-4056-99c7-428ff45d8887",
+       "api_key": "872fe3e3-3e92-45dc-9588-8b87e231b344",
+       "query": "Comment contester une amende pour stationnement?"
+     }'
+
+# For local development
+curl -X POST http://127.0.0.1:8000/legal \
      -H "Content-Type: application/json" \
      -d '{
        "user_id": "564bac7a-60f9-4056-99c7-428ff45d8887",
@@ -70,54 +88,86 @@ curl -X POST https://questionlegale.vercel.app \
 
 Replace `user_id` with your actual user ID and `api_key` with your API key, and update the query as needed.
 
-## Deployment
+**Successful Response (Status Code 200):**
 
-This project is configured for deployment on Vercel. To deploy:
+```json
+{
+  "response": "Pour contester une amende de stationnement, voici les étapes à suivre:\n\n1. Délais:\n- Vous avez 30 jours à partir de la date de l'infraction pour contester\n- Le délai commence à la date inscrite sur l'avis d'infraction\n\n2. Options de contestation:\n- En ligne sur le site de la cour municipale\n- Par la poste en envoyant le formulaire de contestation\n- En personne au bureau de la cour municipale\n\n3. Documents nécessaires:\n- L'avis d'infraction original\n- Preuves justifiant la contestation (photos, reçus, etc.)\n- Pièce d'identité valide\n\n4. Procédure:\n- Remplir le formulaire de plaidoyer de non-culpabilité\n- Joindre les preuves pertinentes\n- Conserver une copie des documents envoyés\n\n5. Suivi:\n- Vous recevrez un avis de convocation pour l'audience\n- Préparez votre défense et vos arguments\n\nImportant: Le dépôt d'une contestation suspend l'obligation de paiement jusqu'au jugement."
+}
+```
+
+### `/status` Endpoint
+
+This endpoint provides a simple health check to confirm the API is running.
+
+**Request:**
+
+```bash
+# For deployed version
+curl https://questionlegale.vercel.app/status
+
+# For local development
+curl http://127.0.0.1:8000/status
+```
+
+**Successful Response (Status Code 200):**
+
+```json
+{
+  "status": "ok"
+}
+```
+
+## Deployment on Vercel
 
 1. Install the Vercel CLI:
     ```bash
     npm install -g vercel
     ```
-2. Deploy the project:
+
+2. Configure Environment Variables:
+   - Go to your Vercel dashboard
+   - Select your project
+   - Navigate to Settings > Environment Variables
+   - Add all the variables from your `.env` file
+
+3. Deploy the project:
     ```bash
     vercel
     ```
 
+4. For production deployment:
+    ```bash
+    vercel --prod
+    ```
+
+The deployment process will automatically:
+- Detect your Python project
+- Install dependencies from requirements.txt
+- Configure the ASGI server for FastAPI
+- Set up the routes based on vercel.json
+
 ## Project Structure
 
--   `api/`: Contains the main API code (`main.py`) and the prompt template (`prompt_template.pt`).
--   `logs/`: Directory for storing log files (created automatically).
--   `.env`: Environment variables for Supabase credentials and AI model configuration.
--   `requirements.txt`: Python dependencies.
--   `readme.md`: Project documentation (this file).
--   `vercel.json`: Vercel deployment configuration.
+-   `api/`: Contains the main API code
+    - `main.py`: Main FastAPI application
+    - `prompt_template.pt`: Template for AI model prompts
+-   `.env`: Environment variables
+-   `requirements.txt`: Python dependencies
+-   `readme.md`: Project documentation
+-   `vercel.json`: Vercel deployment configuration
+-   `supabase_profiles_rls.sql`: Supabase RLS policies
+-   `supabase_rls_setup.sql`: Supabase setup scripts
 
+## Error Handling
 
----Supabase Decrement
+The API includes comprehensive error handling for:
+- Invalid/missing credentials
+- Insufficient credits
+- Rate limiting
+- AI model errors
+- Database connection issues
 
---Decrement Credit function
-create or replace function decrement_credits(user_uuid uuid) 
-returns void as $$
-  update profiles 
-  set credits = credits - 1 
-  where user_id = user_uuid and credits > 0;
-$$ language sql;
+All errors return appropriate HTTP status codes and descriptive messages.
 
-
--------------------
-
-Okay, Row Level Security (RLS) is a very common reason for this behavior. The SQL function might be correct, but the security policies prevent the API (running as a specific role, often authenticated) from actually performing the UPDATE operation defined within that function.
-
-Please go to your Supabase Dashboard:
-
-Navigate to Authentication -> Policies.
-Find the profiles table in the list.
-Look for policies related to the UPDATE operation.
-You need an UPDATE policy that allows the role your API uses to modify the credits field for the relevant user. A common policy allows users to update their own profile. It might look something like this:
-
-Policy Name: Allow authenticated users to update their own profile (or similar)
-Target Roles: authenticated (or the specific role your API key corresponds to)
-Operation: UPDATE
-USING expression: (auth.uid() = user_id)
-WITH CHECK expression: (auth.uid() = user_id)
-
+---

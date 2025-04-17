@@ -19,15 +19,14 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
 # Virtual Environment
-api/myenv/
 myenv/
 venv/
 ENV/
-
-# Logs
-api/logs/*.log
+env/
+.env
 
 # IDE
 .idea/
@@ -35,10 +34,9 @@ api/logs/*.log
 *.swp
 *.swo
 
-# Environment variables
-.env
-.env.dev
-
-# Operating System
+# OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log

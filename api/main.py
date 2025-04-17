@@ -18,114 +18,58 @@ from gotrue.errors import AuthApiError # Corrected import based on search
 from openai import AsyncOpenAI, OpenAIError # Add OpenAI import
 
 from fastapi import BackgroundTasks # Import BackgroundTasks
-# Load prompt template
-script_dir = Path(__file__).parent
-with open(script_dir / "prompt_template.pt", "r") as f:
-    PROMPT_TEMPLATE = Template(f.read())
 
-load_dotenv()
+# --- Logging Configuration FIRST ---
+# Determine log level from environment variable, default to INFO
+log_level_name = os.getenv("LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, log_level_name, logging.INFO)
+
+# Configure logging to output to stdout for Vercel
+logging.basicConfig(
+    level=log_level,
+    format='%(asctime)s.%(msecs)03d %(levelname)s %(module)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[logging.StreamHandler()] # Vercel captures stdout
+)
+# Get the root logger AFTER basicConfig
+logger = logging.getLogger(__name__)
+logger.info("API server starting...")
+logger.info(f"Environment: {os.getenv('VERCEL_ENV', 'development')}")
+logger.info(f"Log level: {log_level_name}")
+# --- End Logging Configuration ---
+
+# Load prompt template with error handling
+script_dir = Path(__file__).parent
+prompt_template_path = script_dir / "prompt_template.pt"
+try:
+    with open(prompt_template_path, "r") as f:
+        PROMPT_TEMPLATE = Template(f.read())
+    logger.info(f"Prompt template loaded successfully from {prompt_template_path}")
+except FileNotFoundError:
+    logger.error(f"Prompt template file not found at {prompt_template_path}. Cannot proceed.")
+    # Raising an error here will stop the app, which is correct behavior if the template is essential
+    raise FileNotFoundError(f"Required prompt template file not found: {prompt_template_path}")
+except Exception as e:
+    logger.error(f"Error loading prompt template file {prompt_template_path}: {e}", exc_info=True)
+    raise # Re-raise other unexpected errors
+
+# Load .env file from the parent directory (project root)
+dotenv_path = Path(__file__).parent.parent / '.env'
+logger.info(f"Attempting to load .env file from: {dotenv_path}")
+if dotenv_path.is_file():
+    load_dotenv(dotenv_path=dotenv_path)
+    logger.info(".env file found and loaded.")
+else:
+    logger.warning(".env file not found at the expected location. Relying on environment variables.")
 
 # Helper function to get boolean value from environment variable
 def get_bool_env(var_name, default=True):
     value = os.getenv(var_name, str(default))
     return value.lower() in ("1", "true", "yes", "on")
 
-# Logging control variables
-LOG_INFO_ENABLED = get_bool_env("LOG_INFO_ENABLED", False)
-LOG_DEBUG_ENABLED = get_bool_env("LOG_DEBUG_ENABLED", False)
-LOG_WARNING_ENABLED = get_bool_env("LOG_WARNING_ENABLED", False)
-LOG_ERROR_ENABLED = get_bool_env("LOG_ERROR_ENABLED", True)
-
-# Load environment variables (already loaded earlier, but ensure it's done before use)
-# load_dotenv() # This is typically done once at the start
-
-# Get logging enable flags from environment variables
-log_info_enabled = get_bool_env("LOG_INFO_ENABLED", True)
-log_debug_enabled = get_bool_env("LOG_DEBUG_ENABLED", True)
-log_warning_enabled = get_bool_env("LOG_WARNING_ENABLED", True) # Read for potential future use
-log_error_enabled = get_bool_env("LOG_ERROR_ENABLED", True)
-
-# Create logs directory relative to this script file
-script_dir = Path(__file__).parent # Ensure logs are relative to main.py
-logs_dir = script_dir / "logs"
-logs_dir.mkdir(parents=True, exist_ok=True)
-
-log_files = {
-    'error': logs_dir / 'error.log',
-    'access': logs_dir / 'access.log',
-    'info': logs_dir / 'info.log',
-    'debug': logs_dir / 'debug.log'
-}
-
-# Create log files if they don't exist
-for log_file in log_files.values():
-    log_file.touch(exist_ok=True)
-
-# Configure logging
-# Basic config - set level low to allow handlers to filter
-logging.basicConfig(
-    level=logging.DEBUG, # Set to lowest level, handlers will filter
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(), # Keep console output
-    ],
-    # Force=True might be needed if basicConfig was called elsewhere implicitly
-    # force=True
-)
-
-# Get root logger to add handlers conditionally
-root_logger = logging.getLogger()
-
-# Use logging.info for setup messages AFTER basicConfig is set
-logging.info("--- Logging Configuration Start ---")
-
-# Error logger
-if log_error_enabled:
-    error_handler = logging.FileHandler(str(log_files['error']))
-    error_handler.setLevel(logging.ERROR)
-    error_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    root_logger.addHandler(error_handler)
-    logging.info("Error logging to file enabled.")
-else:
-    logging.info("Error logging to file disabled.")
-
-# Info logger (also handles WARNING if enabled)
-if log_info_enabled:
-    info_handler = logging.FileHandler(str(log_files['info']))
-    # This handler will capture INFO, WARNING by default if level is INFO
-    info_handler.setLevel(logging.INFO)
-    info_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    root_logger.addHandler(info_handler)
-    logging.info("Info/Warning logging to file enabled.")
-else:
-    logging.info("Info/Warning logging to file disabled.")
-
-# Access logger for API requests (remains unconditional)
-access_logger = logging.getLogger('access')
-access_logger.setLevel(logging.INFO)
-access_handler = logging.FileHandler(str(log_files['access']))
-access_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
-access_logger.addHandler(access_handler)
-access_logger.propagate = False # Prevent access logs going to root handlers
-logging.info("Access logging to file enabled.")
-
-# Debug logger (separate logger)
-debug_logger = logging.getLogger('debug')
-if log_debug_enabled:
-    debug_logger.setLevel(logging.DEBUG) # Set level on the specific logger
-    debug_handler = logging.FileHandler(str(log_files['debug']))
-    debug_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s'))
-    debug_logger.addHandler(debug_handler)
-    debug_logger.propagate = False # Prevent debug logs going to root handlers
-    logging.info("Debug logging to file enabled.")
-else:
-    debug_logger.setLevel(logging.CRITICAL + 1) # Effectively disable the logger
-    # Remove handlers if they exist from previous runs? Might be overkill.
-    logging.info("Debug logging to file disabled.")
-
-logging.info("--- Logging Configuration End ---")
-
-logger = logging.getLogger(__name__)
+# Specific loggers can be obtained if needed, but basicConfig covers the root
+access_logger = logging.getLogger('access') # Can still use specific loggers
+debug_logger = logging.getLogger('debug')   # They will inherit the root config
 
 # Supabase setup
 supabase_url: str = os.getenv("SUPABASE_URL")
@@ -137,38 +81,40 @@ openai_api_key: str = os.getenv("OPENAI_API_KEY") # Use OPENAI_API_KEY
 gemini_base_url: str = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/") # Keep base URL for Gemini endpoint
 gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash") # Keep model for Gemini endpoint
 
-if not openai_api_key: # Check openai_api_key
-    if LOG_ERROR_ENABLED:
-        logger.error("OPENAI_API_KEY environment variable is not set") # Update error message
-    raise EnvironmentError("OPENAI_API_KEY is not set") # Update exception message
+# Environment variable checks
+logger.info("Checking required environment variables...")
+required_vars = {
+    "SUPABASE_URL": supabase_url,
+    "SUPABASE_KEY": supabase_key,
+    "OPENAI_API_KEY": openai_api_key,
+    "GEMINI_BASE_URL": gemini_base_url,
+    "GEMINI_MODEL": gemini_model
+}
+missing_vars = [name for name, value in required_vars.items() if not value]
 
-if not gemini_base_url:
-    if LOG_ERROR_ENABLED:
-        logger.error("GEMINI_BASE_URL environment variable is not set")
-    raise EnvironmentError("GEMINI_BASE_URL is not set")
-
-if not gemini_model:
-    if LOG_ERROR_ENABLED:
-        logger.error("GEMINI_MODEL environment variable is not set")
-    raise EnvironmentError("GEMINI_MODEL is not set")
+if missing_vars:
+    error_message = f"Missing required environment variables: {', '.join(missing_vars)}"
+    logger.error(error_message)
+    raise EnvironmentError(error_message)
+else:
+    logger.info("All required environment variables seem to be present.")
 
 # Lifespan context manager for startup/shutdown events
 @contextlib.asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app_instance: FastAPI): # Renamed app -> app_instance to avoid potential shadowing
+    logger.info("Lifespan starting...")
     # Initialize Supabase client on startup
     supabase_url: str = os.getenv("SUPABASE_URL")
     supabase_key: str = os.getenv("SUPABASE_KEY")  # Use anon/public key only
     if not supabase_url or not supabase_key:
-        if LOG_ERROR_ENABLED:
-            logger.error("SUPABASE_URL or SUPABASE_KEY environment variables not set.")
+        logger.error("SUPABASE_URL or SUPABASE_KEY environment variables not set.")
         raise EnvironmentError("Supabase URL or Key not configured.")
     try:
         # Verify environment variables
         if not supabase_url or not supabase_key:
             raise ValueError("Supabase URL or Key not configured")
             
-        if LOG_INFO_ENABLED:
-            logger.info(f"Initializing Supabase client with URL: {supabase_url[:15]}...")
+        logger.info(f"Initializing Supabase client with URL: {supabase_url[:15]}...")
         
         # Create and await the async client with proper storage
         from gotrue._async.storage import AsyncMemoryStorage
@@ -187,65 +133,61 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("Supabase auth module not initialized")
             
         # Store client
-        app.state.supabase = supabase_client
-        if LOG_INFO_ENABLED:
-            logger.info(f"Supabase client initialized successfully. Type: {type(supabase_client)}")
-        if LOG_DEBUG_ENABLED:
-            logger.debug(f"Client methods: {[m for m in dir(supabase_client) if not m.startswith('_')]}")
+        app_instance.state.supabase = supabase_client # Use app_instance
+        logger.info(f"Supabase client initialized successfully. Type: {type(supabase_client)}")
+        # Removed debug log for brevity in production logs, can be added back if needed
+        # logger.debug(f"Client methods: {[m for m in dir(supabase_client) if not m.startswith('_')]}")
 
         # Initialize OpenAI client (for Gemini)
-        if LOG_INFO_ENABLED:
-            logger.info(f"Initializing OpenAI client for Gemini with base URL: {gemini_base_url}")
+        logger.info(f"Initializing OpenAI client for Gemini with base URL: {gemini_base_url}")
         openai_client = AsyncOpenAI(
             api_key=openai_api_key, # Use openai_api_key variable
             base_url=gemini_base_url
         )
-        app.state.openai = openai_client
-        if LOG_INFO_ENABLED:
-            logger.info("OpenAI client for Gemini initialized successfully.")
+        app_instance.state.openai = openai_client # Use app_instance
+        logger.info("OpenAI client for Gemini initialized successfully.")
 
         yield
     except Exception as e:
-        if LOG_ERROR_ENABLED:
-            logger.error(f"Failed to initialize Supabase client: {e}")
+        logger.error(f"Failed to initialize Supabase client: {e}", exc_info=True) # Add exc_info
         raise
     finally:
         # Explicit cleanup of Supabase client
-        if hasattr(app.state, 'supabase') and app.state.supabase is not None:
+        if hasattr(app_instance.state, 'supabase') and app_instance.state.supabase is not None: # Use app_instance
             try:
-                if hasattr(app.state.supabase, 'aclose'):
-                    await app.state.supabase.aclose()
-                    if LOG_INFO_ENABLED:
-                        logger.info("Supabase client closed successfully")
+                if hasattr(app_instance.state.supabase, 'aclose'): # Use app_instance
+                    await app_instance.state.supabase.aclose() # Use app_instance
+                    logger.info("Supabase client closed successfully")
                 else:
-                    if LOG_WARNING_ENABLED:
-                        logger.warning("Supabase client missing aclose method")
+                    logger.warning("Supabase client missing aclose method")
             except Exception as e:
-                if LOG_ERROR_ENABLED:
-                    logger.error(f"Error closing Supabase client: {e}")
+                logger.error(f"Error closing Supabase client: {e}", exc_info=True)
 
         # Explicit cleanup of OpenAI client (if needed)
-        if hasattr(app.state, 'openai') and app.state.openai is not None:
+        if hasattr(app_instance.state, 'openai') and app_instance.state.openai is not None: # Use app_instance
             try:
                 # The openai library >= 1.0 manages connections automatically via httpx.
                 # Explicit close is generally not needed unless specific resource cleanup is required.
                 # await app.state.openai.close() # Uncomment if explicit close becomes necessary
-                if LOG_INFO_ENABLED:
-                    logger.info("OpenAI client cleanup check complete.")
+                logger.info("OpenAI client cleanup check complete.")
             except Exception as e:
-                if LOG_ERROR_ENABLED:
-                    logger.error(f"Error during OpenAI client cleanup: {e}")
+                logger.error(f"Error during OpenAI client cleanup: {e}", exc_info=True)
 
-        if LOG_INFO_ENABLED:
-            logger.info("Lifespan cleanup finished")
+        logger.info("Lifespan cleanup finished")
+    logger.info("Lifespan finished.")
 
-# FastAPI setup
-app = FastAPI(lifespan=lifespan)
+# Log right before app creation
+logger.info("Defining FastAPI app instance...")
+try:
+    app = FastAPI(lifespan=lifespan)
+    logger.info("FastAPI app instance defined successfully.")
+except Exception as e:
+    logger.error(f"Error during FastAPI app instantiation: {e}", exc_info=True)
+    raise # Re-raise the exception to ensure it stops execution
 
 # Rate limiting setup
 MAX_REQUESTS_PER_DAY = int(os.getenv("MAX_REQUESTS_PER_DAY", 1000))
 MAX_REQUESTS_PER_MINUTE = int(os.getenv("MAX_REQUESTS_PER_MINUTE", 100))
-
 
 async def check_user_key(request: Request, user_id: str, api_key: str) -> str:
     """
@@ -255,20 +197,17 @@ async def check_user_key(request: Request, user_id: str, api_key: str) -> str:
     """
     # Verify Supabase client is properly initialized and accessible
     if not hasattr(request.app.state, 'supabase'):
-        if LOG_ERROR_ENABLED:
-            logger.error("Supabase client missing from app.state")
+        logger.error("Supabase client missing from app.state")
         raise HTTPException(status_code=500, detail="Authentication service not initialized")
         
     supabase_client = request.app.state.supabase
     if supabase_client is None:
-        if LOG_ERROR_ENABLED:
-            logger.error("Supabase client is None in check_user_key")
+        logger.error("Supabase client is None in check_user_key")
         raise HTTPException(status_code=500, detail="Authentication service unavailable")
         
     try:
         # Verify API Key and Credits for the provided user_id
-        if LOG_INFO_ENABLED:
-            logger.info(f"Verifying API key {api_key} and credits for user ID: {user_id}")
+        logger.info(f"Verifying API key {'*' * (len(api_key)-4) + api_key[-4:]} and credits for user ID: {user_id}") # Mask API key
         
         # Use service role client for profile access
         profile_response = await request.app.state.supabase \
@@ -278,14 +217,13 @@ async def check_user_key(request: Request, user_id: str, api_key: str) -> str:
             .execute()
 
         try:
-            if LOG_DEBUG_ENABLED:
-                logger.debug(f"Supabase query for user {user_id} returned: {profile_response}")
-                logger.debug(f"Response data: {profile_response.data}")
-                logger.debug(f"Response count: {profile_response.count}")
+            # Removed debug logs for brevity, can be re-enabled via LOG_LEVEL=DEBUG
+            # logger.debug(f"Supabase query for user {user_id} returned: {profile_response}")
+            # logger.debug(f"Response data: {profile_response.data}")
+            # logger.debug(f"Response count: {profile_response.count}")
                 
             if not profile_response.data or not isinstance(profile_response.data, list):
-                if LOG_ERROR_ENABLED:
-                    logger.error(f"No profile data found for user {user_id}. Full response: {profile_response}")
+                logger.error(f"No profile data found for user {user_id}. Full response: {profile_response}")
                 raise HTTPException(status_code=404, detail="User profile not found")
 
             try:
@@ -295,41 +233,31 @@ async def check_user_key(request: Request, user_id: str, api_key: str) -> str:
                     
                 # Check if the provided API key matches the one in the profile
                 if user_profile.get("api_key") != api_key:
-                    if LOG_WARNING_ENABLED:
-                        logger.warning(f"API key mismatch for user ID: {user_id}. Provided: {api_key}, Expected: {user_profile.get('api_key')}")
+                    logger.warning(f"API key mismatch for user ID: {user_id}. Provided: {'*' * (len(api_key)-4) + api_key[-4:]}") # Mask API key
                     raise HTTPException(status_code=403, detail="Invalid API key for this user")
 
                 # Check credits
                 if user_profile.get("credits", 0) <= 0:
-                    if LOG_WARNING_ENABLED:
-                        logger.warning(f"User ID: {user_id} has insufficient credits ({user_profile.get('credits', 0)}).")
+                    logger.warning(f"User ID: {user_id} has insufficient credits ({user_profile.get('credits', 0)}).")
                     raise HTTPException(status_code=403, detail="Insufficient credits")
                     
             except (IndexError, ValueError, AttributeError) as e:
-                if LOG_ERROR_ENABLED:
-                    logger.error(f"Malformed profile data for user {user_id}: {str(e)}. Data: {profile_response.data}")
+                logger.error(f"Malformed profile data for user {user_id}: {str(e)}. Data: {profile_response.data}", exc_info=True)
                 raise HTTPException(status_code=500, detail="Invalid profile data format")
 
-            if LOG_INFO_ENABLED:
-                logger.info(f"API key {api_key} validated for user ID: {user_id}. Credits: {user_profile['credits']}")
+            logger.info(f"API key validated for user ID: {user_id}. Credits: {user_profile['credits']}")
             
             return user_id  # Return user_id on success
 
         except Exception as e:
-            if LOG_ERROR_ENABLED:
-                logger.error(f"Error processing profile for user {user_id}: {str(e)}")
+            logger.error(f"Error processing profile for user {user_id}: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail="Error processing user profile")
 
     except HTTPException as http_exc:
         # Re-raise specific HTTPExceptions (e.g., insufficient credits)
         raise http_exc
-
-    except HTTPException as http_exc:
-        # Re-raise specific HTTPExceptions (e.g., insufficient credits)
-        raise http_exc
     except Exception as e:
-        if LOG_ERROR_ENABLED:
-            logger.error(f"Error during user verification for ID {user_id}: {e}")
+        logger.error(f"Error during user verification for ID {user_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error during verification")
 
 async def query_openai(request: Request, prompt: str) -> str:
@@ -339,13 +267,11 @@ async def query_openai(request: Request, prompt: str) -> str:
     """
     client: AsyncOpenAI = request.app.state.openai
     if not client:
-        if LOG_ERROR_ENABLED:
-            logger.error("OpenAI client not found in application state.")
+        logger.error("OpenAI client not found in application state.")
         raise HTTPException(status_code=500, detail="AI service not initialized")
 
     try:
-        if LOG_DEBUG_ENABLED:
-            logger.debug(f"Sending prompt to model {gemini_model}: {prompt[:100]}...")
+        logger.debug(f"Sending prompt to model {gemini_model}: {prompt[:100]}...") # Keep debug log, controlled by LOG_LEVEL
         response = await client.chat.completions.create(
             model=gemini_model,
             messages=[
@@ -356,17 +282,14 @@ async def query_openai(request: Request, prompt: str) -> str:
         )
         response_text = response.choices[0].message.content
         if not response_text:
-            if LOG_WARNING_ENABLED:
-                logger.warning("Received empty response from AI model.")
+            logger.warning("Received empty response from AI model.")
             # Decide how to handle empty response, maybe raise error or return default
             raise HTTPException(status_code=500, detail="AI model returned an empty response.")
-        if LOG_DEBUG_ENABLED:
-            logger.debug(f"Received response: {response_text[:100]}...")
+        logger.debug(f"Received response: {response_text[:100]}...") # Keep debug log
         return response_text
 
     except OpenAIError as e: # Catch specific OpenAI errors
-        if LOG_ERROR_ENABLED:
-            logger.error(f"OpenAI API error: {e} (Type: {type(e).__name__})")
+        logger.error(f"OpenAI API error: {e} (Type: {type(e).__name__})")
         status_code = 500 # Default internal server error
         detail = f"Error querying AI model: {e}"
 
@@ -391,8 +314,7 @@ async def query_openai(request: Request, prompt: str) -> str:
 
     except Exception as e:
         # Catch any other unexpected errors
-        if LOG_ERROR_ENABLED:
-            logger.error(f"Unexpected error querying AI model: {e}", exc_info=True)
+        logger.error(f"Unexpected error querying AI model: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Unexpected internal server error: {e}")
 
 async def consume_credit(request: Request, user_id: str):
@@ -402,8 +324,7 @@ async def consume_credit(request: Request, user_id: str):
     """
     supabase_client: AsyncClient = request.app.state.supabase
     if not supabase_client:
-        if LOG_ERROR_ENABLED:
-            logger.error(f"[consume_credit] Supabase client not found for user_id: {user_id}")
+        logger.error(f"[consume_credit] Supabase client not found for user_id: {user_id}")
         return
 
     try:
@@ -415,14 +336,12 @@ async def consume_credit(request: Request, user_id: str):
             .execute()
 
         if not profile_res.data:
-            if LOG_ERROR_ENABLED:
-                logger.error(f"[consume_credit] No profile found for user_id: {user_id}")
+            logger.error(f"[consume_credit] No profile found for user_id: {user_id}")
             return
 
         current_credits = profile_res.data.get("credits", 0)
         if current_credits <= 0:
-            if LOG_WARNING_ENABLED:
-                logger.warning(f"[consume_credit] User {user_id} has no credits ({current_credits})")
+            logger.warning(f"[consume_credit] User {user_id} has no credits ({current_credits})")
             return
 
         # Use RPC for atomic decrement
@@ -433,27 +352,13 @@ async def consume_credit(request: Request, user_id: str):
 
         # If the RPC call executes without raising an exception,
         # and the function returns void, we assume success (HTTP 204).
-        if LOG_INFO_ENABLED:
-            logger.info(f"[consume_credit] Successfully executed decrement RPC for user_id: {user_id}")
+        logger.info(f"[consume_credit] Successfully executed decrement RPC for user_id: {user_id}")
 
     except Exception as e:
         # Log any exception during the RPC call or the preceding checks
-        if LOG_ERROR_ENABLED:
-            logger.error(f"[consume_credit] Error during credit consumption for user_id {user_id}: {e}", exc_info=True)
-
-    except Exception as e:
-        if LOG_ERROR_ENABLED:
-            logger.error(f"[consume_credit] Error decrementing credits for user_id {user_id}: {e}", exc_info=True)
-
-
-    except Exception as e:
-        if LOG_ERROR_ENABLED:
-            logger.error(f"[consume_credit] Error decrementing credits for user_id {user_id}: {e}", exc_info=True)
+        logger.error(f"[consume_credit] Error during credit consumption for user_id {user_id}: {e}", exc_info=True)
 
 @app.post("/legal")
-# @limits(calls=MAX_REQUESTS_PER_DAY, period=24 * 60 * 60)
-# @limits(calls=MAX_REQUESTS_PER_MINUTE, period=60)
-# @sleep_and_retry
 async def legal_endpoint(request: Request, background_tasks: BackgroundTasks):
     """
     Endpoint to handle legal requests.
@@ -463,7 +368,8 @@ async def legal_endpoint(request: Request, background_tasks: BackgroundTasks):
     access_logger.info(f"Request from {client_host} to /legal endpoint")
     try:
         data = await request.json()
-        debug_logger.debug(f"Request data: {data}")
+        # Avoid logging potentially sensitive request data by default
+        # logger.debug(f"Request data: {data}")
         user_id = data.get("user_id")
         api_key = data.get("api_key")
         user_input = data.get("query")
@@ -476,33 +382,39 @@ async def legal_endpoint(request: Request, background_tasks: BackgroundTasks):
         # Verify user_id and API key
         user_id = await check_user_key(request, user_id, api_key)
 
-
         prompt = PROMPT_TEMPLATE.substitute(context="", question=user_input)
-        debug_logger.debug(f"Generated prompt: {prompt}")
+        logger.debug(f"Generated prompt (first 100 chars): {prompt[:100]}") # Log only start of prompt
         # Pass request object to query_openai
         response_text = await query_openai(request, prompt)
-        debug_logger.debug(f"AI response: {response_text}") # Update log message variable name
+        logger.debug(f"AI response (first 100 chars): {response_text[:100]}") # Log only start of response
 
         # Add credit consumption to background tasks
         background_tasks.add_task(consume_credit, request, user_id)
         
         processing_time = time.time() - start_time
-        if LOG_INFO_ENABLED:
-            logger.info(f"Legal request processed successfully in {processing_time:.2f} seconds")
-        access_logger.info(f"Request completed in {processing_time:.2f}s with status 200")
+        logger.info(f"Legal request processed successfully in {processing_time:.2f} seconds for user {user_id}")
+        access_logger.info(f"Request from {client_host} completed in {processing_time:.2f}s with status 200") # Use access_logger here
         return {"response": response_text}
 
     except HTTPException as e:
-        error_msg = f"HTTP Exception: {e}"
-        if LOG_ERROR_ENABLED:
-            logger.error(error_msg)
-        access_logger.info(f"Request failed with status {e.status_code}")
-        debug_logger.error(f"HTTP Exception details: {e.detail}")
+        # Log the exception status code and detail
+        logger.error(f"HTTP Exception: Status={e.status_code}, Detail={e.detail}")
+        access_logger.info(f"Request from {client_host} failed with status {e.status_code}") # Use access_logger
         raise e
     except Exception as e:
-        error_msg = f"Exception: {e}"
-        if LOG_ERROR_ENABLED:
-            logger.error(error_msg)
-        access_logger.info("Request failed with status 500")
-        debug_logger.error(f"Unexpected error details: {str(e)}")
+        # Log the full exception traceback for unexpected errors
+        logger.error(f"Unexpected Exception: {e}", exc_info=True)
+        access_logger.info(f"Request from {client_host} failed with status 500") # Use access_logger
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+
+@app.get("/status", status_code=HTTPStatus.OK)
+async def get_status():
+    """Simple health check endpoint."""
+    logger.info("Health check endpoint /status accessed")
+    return {"status": "ok"}
+
+# Add a root endpoint for basic testing
+@app.get("/")
+async def read_root():
+    logger.info("Root endpoint / accessed")
+    return {"message": "API is running"}
